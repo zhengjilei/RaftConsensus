@@ -1,0 +1,15 @@
+package com.raft.log;
+
+import com.raft.pojo.LogEntry;
+
+public interface LogModule {
+
+    void write(LogEntry entry);
+
+    LogEntry read(long index);
+
+    LogEntry getLast();
+
+    Long getLastIndex();
+
+}
