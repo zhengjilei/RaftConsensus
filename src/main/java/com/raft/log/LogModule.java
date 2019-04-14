@@ -12,4 +12,9 @@ public interface LogModule {
 
     Long getLastIndex();
 
+    void updateLastIndex(long index);
+
+    void removeFromIndex(long index);
+
+    void printAll();
 }

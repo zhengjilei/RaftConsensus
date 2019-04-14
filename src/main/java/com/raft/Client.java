@@ -13,23 +13,31 @@ public class Client {
         RPCClient rpcClient = new RPCClient();
         Request<Command> request1 = new Request<>();
 
-        Command c1 = new Command("a", "1");
-        Command c2 = new Command("b", "2");
-        Command c3 = new Command("c", "3");
+        Command c1 = new Command("d", "4", Command.PUT);
+        Command c2 = new Command("b", "2", Command.PUT);
+        Command c3 = new Command("c", "3", Command.PUT);
 
         request1.setReqObj(c1);
         request1.setType(Request.RequestType.CLIENT);
-        request1.setUrl("localhost:8003");
+        request1.setDesc("发送put请求");
+        request1.setUrl("localhost:8002");
         ClientResp resp = (ClientResp) rpcClient.send(request1);
-        System.out.println("c1Result: =" + resp.getResult());
+        System.out.println("c1Result: =" + resp);
+/*
+        Request request2 = new Request();
+        request2.setType(Request.RequestType.CLIENT);
+        request2.setDesc("发送put请求");
+        request2.setUrl("localhost:8002");
+        request2.setReqObj(c2);
+        ClientResp resp2 = (ClientResp) rpcClient.send(request2);
+        System.out.println("c2Result: =" + resp2);
 
-        request1.setReqObj(c2);
-        ClientResp resp2 = (ClientResp) rpcClient.send(request1);
-        System.out.println(resp2);
-
-        request1.setReqObj(c3);
-        ClientResp resp3 = (ClientResp) rpcClient.send(request1);
-        System.out.println(resp3);
-
+        Request request3 = new Request();
+        request3.setType(Request.RequestType.CLIENT);
+        request3.setDesc("发送put请求");
+        request3.setUrl("localhost:8002");
+        request3.setReqObj(c3);
+        ClientResp resp3 = (ClientResp) rpcClient.send(request3);
+        System.out.println("c3Result: =" + resp3);*/
     }
 }

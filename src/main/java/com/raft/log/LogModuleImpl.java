@@ -2,20 +2,28 @@ package com.raft.log;
 
 import com.alibaba.fastjson.JSON;
 import com.raft.pojo.LogEntry;
+import com.sun.org.apache.xerces.internal.impl.xs.opti.DefaultNode;
 import org.rocksdb.Options;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * created by Ethan-Walker on 2019/4/9
  */
 public class LogModuleImpl implements LogModule {
+    private static final Logger LOGGER = LoggerFactory.getLogger(DefaultNode.class);
+
     private final static byte[] LAST_INDEX_KEY = "LAST_INDEX_KEY".getBytes();
     private static String dbDir;
     private static String logsDir;
     private static RocksDB rocksDB;
+
+    private ReentrantLock lock;
 
     static {
         dbDir = "./db/" + System.getProperty("serverPort");
@@ -35,16 +43,27 @@ public class LogModuleImpl implements LogModule {
         } catch (RocksDBException e) {
             e.printStackTrace();
         }
+        lock = new ReentrantLock();
     }
 
     public void write(LogEntry entry) {
-        long lastIndex = getLastIndex();
+        lock.lock();
+        System.out.println("-----------to write: " + entry + "------------");
         try {
+            long lastIndex = getLastIndex();
+            System.out.println("lastIndex: " + lastIndex);
+            entry.setIndex(lastIndex + 1);
             rocksDB.put(convertToBytes(lastIndex + 1), JSON.toJSONBytes(entry));
             updateLastIndex(lastIndex + 1);
+
+            System.out.println("update lastIndex: " + getLastIndex());
+            System.out.println("after append ,last entry= " + getLast());
         } catch (RocksDBException e) {
             e.printStackTrace();
+        } finally {
+            lock.unlock();
         }
+        System.out.println("--------write-over----------------");
     }
 
     public LogEntry read(long index) {
@@ -61,14 +80,34 @@ public class LogModuleImpl implements LogModule {
     public LogEntry getLast() {
         long lastIndex = getLastIndex();
         try {
-            if(lastIndex==-1) return null;
+            if (lastIndex == -1) return null;
             byte[] result = rocksDB.get(convertToBytes(lastIndex));
-            LogEntry entry = (LogEntry) JSON.parseObject(result, LogEntry.class);
+            LogEntry entry = JSON.parseObject(result, LogEntry.class);
             return entry;
         } catch (RocksDBException e) {
             e.printStackTrace();
         }
         return null;
+    }
+
+    @Override
+    public void removeFromIndex(long index) {
+        lock.lock();
+        long lastIndex = getLastIndex();
+        boolean success = false;// 是否删除成功
+        try {
+            for (long i = index; i <= lastIndex; i++) {
+                rocksDB.delete(String.valueOf(i).getBytes());
+            }
+            success = true;
+        } catch (RocksDBException e) {
+            e.printStackTrace();
+        } finally {
+            if (success) {
+                updateLastIndex(index - 1);
+            }
+            lock.unlock();
+        }
     }
 
     public Long getLastIndex() {
@@ -88,12 +127,25 @@ public class LogModuleImpl implements LogModule {
         return a.toString().getBytes();
     }
 
-    private void updateLastIndex(long index) {
+    public void updateLastIndex(long index) {
         try {
             rocksDB.put(LAST_INDEX_KEY, convertToBytes(index));
         } catch (RocksDBException e) {
             e.printStackTrace();
         }
+    }
 
+    @Override
+    public void printAll() {
+        long lastIndex = getLastIndex();
+        if (lastIndex <= -1)
+            return;
+        // 没有就不输出
+        System.out.println("-----" + logsDir + "--------------");
+        System.out.println("lastIndex: " + lastIndex);
+        for (long i = 0; i <= lastIndex; i++) {
+            LogEntry entry = read(i);
+            System.out.println(entry.toString());
+        }
     }
 }

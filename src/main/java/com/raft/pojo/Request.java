@@ -49,6 +49,7 @@ public class Request<T> implements Serializable {
         VOTE,
         APPEND_ENTRY,
         HEARTBEAT,
-        CLIENT // 客户端发送来的请求
+        CLIENT, // 客户端发送来的请求
+        QUERY_ENTRY
     }
 }

@@ -8,15 +8,14 @@ import java.io.Serializable;
 public class LogEntry implements Serializable {
 
     private int term;  // 任期
-    private int index; // 当前日志项所在leader的位置
+    private long index; // 当前日志项所在leader的位置
     private Command command;
 
     public LogEntry() {
     }
 
-    public LogEntry(int term, int index, Command command) {
+    public LogEntry(int term,  Command command) {
         this.term = term;
-        this.index = index;
         this.command = command;
     }
 
@@ -28,11 +27,11 @@ public class LogEntry implements Serializable {
         this.term = term;
     }
 
-    public int getIndex() {
+    public long getIndex() {
         return index;
     }
 
-    public void setIndex(int index) {
+    public void setIndex(long index) {
         this.index = index;
     }
 

@@ -8,8 +8,8 @@ import java.io.Serializable;
 public class VoteParam implements Serializable {
     private int term;
     private String candidateId; // ip:port，候选者让 其他服务器为自己投票
-    private int prevLogIndex; // 候选人最新的日志条目索引值
-    private int prevLogTerm;   // 候选人最新的日志条目的任期
+    private long prevLogIndex; // 候选人最新的日志条目索引值
+    private long prevLogTerm;   // 候选人最新的日志条目的任期
 
     public int getTerm() {
         return term;
@@ -27,15 +27,15 @@ public class VoteParam implements Serializable {
         this.candidateId = candidateId;
     }
 
-    public int getPrevLogIndex() {
+    public long getPrevLogIndex() {
         return prevLogIndex;
     }
 
-    public void setPrevLogIndex(int prevLogIndex) {
+    public void setPrevLogIndex(long prevLogIndex) {
         this.prevLogIndex = prevLogIndex;
     }
 
-    public int getPrevLogTerm() {
+    public long getPrevLogTerm() {
         return prevLogTerm;
     }
 

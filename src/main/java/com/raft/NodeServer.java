@@ -23,14 +23,14 @@ public class NodeServer {
     private volatile long prevHeartBeatStamp;
 
     private long electionTimeout = 10 * 1000; // 10s 选举过期，重新选举
-    private long heartbeatTimeout = 5 * 1000;// 心跳间隔，
+    private long heartbeatTimeout = 5 * 1000;// 心跳间隔
     // 各节点持久存在
     private volatile int currentTerm;
     private volatile String voteFor; // 为哪一个candidate 投票(IP:port)
 
     // 各节点上可变信息
-    private int commitIndex;    // 已经提交的最大的日志索引，通过读取持久化信息-SegmentLog 得到
-    private int lastApplied;    // 已经应用到状态机的最大日志索引
+    private long commitIndex;    // 已经提交的最大的日志索引，通过读取持久化信息-SegmentLog 得到
+    private long lastApplied;    // 已经应用到状态机的最大日志索引
 
     private static RPCServer rpcServer;
     private static RPCClient rpcClient;
@@ -42,8 +42,8 @@ public class NodeServer {
     private ReentrantLock lock;
 
     // leader 中不稳定存在
-    private Map<Peer, Long> nextIndex; // nextIndex.get(id) 表示要发送给 follower=id 的下一个日志条目的索引
-    private Map<Peer, Long> matchIndex; // matchIndex.get(id) 表示 follower=id  已经匹配的最大日志索引
+    private Map<Peer, Long> nextIndexMap; // nextIndex.get(id) 表示要发送给 follower=id 的下一个日志条目的索引
+    private Map<Peer, Long> matchIndexMap; // matchIndex.get(id) 表示 follower=id  已经匹配的最大日志索引
 
     private volatile NodeStatus status;
 
@@ -123,9 +123,13 @@ public class NodeServer {
         threadPool = Executors.newScheduledThreadPool(3);
 
         // 启动定时周期性选举任务
-        threadPool.scheduleAtFixedRate(new ElectionTask(), 30000, 3000, TimeUnit.MILLISECONDS); // 延迟1s执行，每隔500 ms 检查是否需要重新选举
+        threadPool.scheduleAtFixedRate(new ElectionTask(), 30000, 3000, TimeUnit.MILLISECONDS); // 延迟30s执行，每隔3s 检查是否需要重新选举
         // 启动定时周期性心跳任务
-        threadPool.scheduleAtFixedRate(new HeartbeatTask(), 30000, heartbeatTimeout, TimeUnit.MILLISECONDS); // 延迟 3s 执行，每隔500ms 检查是否需要发送心跳
+        threadPool.scheduleAtFixedRate(new HeartbeatTask(), 30000, 1000, TimeUnit.MILLISECONDS); // 延迟 30s 执行，每隔 1s 检查是否需要发送心跳
+
+        // 启动输出任务, 每隔 3s 打印当前节点存储的日志项
+        threadPool.scheduleAtFixedRate(new PrintTask(), 40000,10000, TimeUnit.MILLISECONDS);
+
         // 获取当前任期
         LogEntry entry = logModule.getLast();
         if (entry != null) {
@@ -141,7 +145,7 @@ public class NodeServer {
             try {
                 if (status == NodeStatus.LEADER)
                     return;
-                System.out.println("election task");
+//                System.out.println("election task");
                 long current = System.currentTimeMillis();
                 if (current - prevElectionStamp < electionTimeout) {
                     // 选举时间未超时，不需要重新选举
@@ -186,7 +190,7 @@ public class NodeServer {
                             voteRequest.setType(Request.RequestType.VOTE);
                             voteRequest.setUrl(peer.getAddr());
 
-                            System.out.println("向" + peer.getAddr() + "发送投票请求");
+//                            System.out.println("向" + peer.getAddr() + "发送投票请求");
                             return rpcClient.send(voteRequest);
                         }
                     });
@@ -258,13 +262,13 @@ public class NodeServer {
      * 当前节点成为 leader 后，初始化 nextIndex[] , matchIndex[]
      */
     public void initNextMatchIndex() {
-        nextIndex = new HashMap<>();
-        matchIndex = new HashMap<>();
+        nextIndexMap = new HashMap<>();
+        matchIndexMap = new HashMap<>();
         List<Peer> otherPeers = peerSet.getOtherPeers();
         long lastIndex = logModule.getLastIndex();
         for (Peer p : otherPeers) {
-            nextIndex.put(p, lastIndex + 1);
-            matchIndex.put(p, 0L);
+            nextIndexMap.put(p, lastIndex + 1);
+            matchIndexMap.put(p, 0L);
         }
     }
 
@@ -283,7 +287,7 @@ public class NodeServer {
             // 更新时间戳
             prevElectionStamp = System.currentTimeMillis();
             prevHeartBeatStamp = System.currentTimeMillis();
-            System.out.println("接受到来自 " + reqObj.getLeaderId() + " 的心跳 term=" + reqObj.getTerm() + ", " + System.currentTimeMillis());
+//            System.out.println("接受到来自 " + reqObj.getLeaderId() + " 的心跳 term=" + reqObj.getTerm() + ", " + System.currentTimeMillis());
 
             // 设置主从关系
             peerSet.setLeader(new Peer(reqObj.getLeaderId()));
@@ -296,7 +300,6 @@ public class NodeServer {
         } finally {
             lock.unlock();
         }
-
         return AppendEntryResult.yes(currentTerm);
 
     }
@@ -311,16 +314,17 @@ public class NodeServer {
                 if (current - prevHeartBeatStamp < heartbeatTimeout) { // 每隔 heartBeatTimeOut 才发送新的心跳
                     return;
                 }
+                prevHeartBeatStamp = System.currentTimeMillis(); // 设置当前发送心跳的时刻
 
                 // 向所有其他follower 发送心跳，心跳参数只需要设置必要的几个
-                System.out.println("--------------发送心跳-------------------------------");
+//                System.out.println("--------------发送心跳-------------------------------");
                 AppendEntryParam param = new AppendEntryParam();
                 param.setEntries(null);
                 param.setLeaderId(peerSet.getSelf().getAddr());
                 param.setTerm(currentTerm);
 
                 List<Peer> otherPeers = peerSet.getOtherPeers();
-                System.out.println("otherpeers:" + otherPeers);
+//                System.out.println("otherpeers:" + otherPeers);
 
                 for (Peer peer : otherPeers) {
                     Request<AppendEntryParam> request = new Request<>();
@@ -343,7 +347,7 @@ public class NodeServer {
                                 System.out.println(request.getDesc() + " =>心跳失败");
                             } // else 不处理
                             else {
-                                System.out.println(request.getDesc() + " =>心跳成功");
+//                                System.out.println(request.getDesc() + " =>心跳成功");
                             }
                         }
                     });
@@ -356,55 +360,238 @@ public class NodeServer {
 
     }
 
-    public Response redirect(Request request) {
+    public Response handleGetRequest(Request<Command> request) {
+        String key = request.getReqObj().getKey();
+
+        // 从状态机中查询 key 得到 LogEntry
+        return ClientResp.yes(null);
+    }
+
+    public Response redirect(Request<Command> request) {
         if (peerSet.getLeader() == null)
             return ClientResp.no("no leader");
         request.setUrl(peerSet.getLeader().getAddr());
+        System.out.println("redirect to :" + peerSet.getLeader().getAddr());
         return rpcClient.send(request);
     }
 
-    public Response handleClientRequest(Request<Command> request) {
+
+    // 多个客户端同时发送请求，需要同步处理
+    public synchronized Response handleClientRequest(Request<Command> request) {
         if (status != NodeStatus.LEADER) {
             return redirect(request);
         }
         // 当前节点是 leader
 
-        LogEntry entry = new LogEntry(currentTerm, commitIndex + 1, request.getReqObj());
+        // get 查询请求
+        if (request.getReqObj().getType() == Command.GET) {
+            return handleGetRequest(request);
+        }
+        System.out.println("currentTerm:" + currentTerm);
 
+        // put 请求
+        System.out.println(System.currentTimeMillis() + "-------" + request.getReqObj());
+        LogEntry entry = new LogEntry(currentTerm, request.getReqObj()); // 日志项的 index 在写入时设置
+        // 首先存入 leader 本地
+        logModule.write(entry);
+
+
+        // 向其他节点发送 appendEntryRPC
         List<Peer> otherPeers = peerSet.getOtherPeers();
+        List<Future<Boolean>> resultList = new ArrayList<>();
         for (Peer p : otherPeers) {
-            threadPool.submit(new Callable<AppendEntryResult>() {
+            Future<Boolean> res = threadPool.submit(new Callable<Boolean>() {
                 @Override
-                public AppendEntryResult call() throws Exception {
-                    AppendEntryParam param = new AppendEntryParam();
-                    param.setTerm(currentTerm);
-                    param.setEntries(Arrays.asList(entry));
-                    param.setLeaderId(peerSet.getLeader().getAddr());
-                    param.setLeaderCommitIndex(commitIndex);
+                public Boolean call() throws Exception {
 
-                    LogEntry lastEntry = logModule.getLast();
-                    if (lastEntry != null) {
-                        param.setPrevLogTerm(lastEntry.getTerm());
-                        param.setPrevLogIndex(lastEntry.getIndex());
+                    long begin = System.currentTimeMillis(), end = begin;
+                    while (end - begin < 20 * 1000L) {
+                        AppendEntryParam param = new AppendEntryParam();
+                        param.setTerm(currentTerm);
+                        // 将[nextIndex, newEntryIndex] 日志全部发送出去
+                        List<LogEntry> entryList = new ArrayList<>();
+                        Long nextIndex = nextIndexMap.get(p);
+                        if (nextIndex != null) {
+                            for (long i = nextIndex; i <= entry.getIndex(); i++) {
+                                LogEntry e = logModule.read(i);
+                                if (e != null) {
+                                    entryList.add(e);
+                                }
+                            }
+                        }
+                        param.setEntries(entryList);
+                        param.setLeaderId(peerSet.getSelf().getAddr());
+                        param.setLeaderCommitIndex(commitIndex);
+
+                        LogEntry lastEntry = logModule.getLast();
+                        if (lastEntry != null) {
+                            param.setPrevLogTerm(lastEntry.getTerm());
+                            param.setPrevLogIndex(lastEntry.getIndex());
+                        }
+                        Request<AppendEntryParam> req = new Request<>();
+                        req.setUrl(p.getAddr());
+                        req.setReqObj(param);
+                        req.setType(Request.RequestType.APPEND_ENTRY);
+                        req.setDesc("向" + p.getAddr() + "发送" + entry);
+                        AppendEntryResult tmpRes = (AppendEntryResult) rpcClient.send(req); // 阻塞式发送 appendEntryRPC
+                        if (tmpRes.isSuccess()) { // 对方复制成功
+                            nextIndexMap.put(p, entry.getIndex() + 1);
+                            matchIndexMap.put(p, entry.getIndex());
+                            System.out.println(p.getAddr() + " 复制成功");
+                            return true;
+                        } else { // 复制失败
+                            if (tmpRes.getTerm() > currentTerm) {   // 对方任期比自己大
+                                currentTerm = tmpRes.getTerm();
+                                status = NodeStatus.FOLLOWER;
+                                return false;
+                            } else {   // 对方任期不比自己大，但失败了, 说明日志不匹配
+                                logModule.removeFromIndex(nextIndex);
+                                nextIndexMap.put(p, nextIndex - 1);
+                                // 继续尝试
+                            }
+
+                        }
+                        end = System.currentTimeMillis();
                     }
-                    Request<AppendEntryParam> req = new Request<>();
-                    req.setUrl(p.getAddr());
-                    req.setReqObj(param);
-                    req.setDesc("向" + p.getAddr() + "发送" + entry);
-                    return null;
+                    System.out.println(p.getAddr() + " 复制失败");
+                    return false;
                 }
             });
 
+            resultList.add(res);
         }
-        return null;
+        // 得到结果
+        CountDownLatch latch = new CountDownLatch(resultList.size());
+        AtomicInteger countYes = new AtomicInteger(1);
+        for (Future<Boolean> f : resultList) {
+            threadPool.execute(() -> {
+                try {
+                    Boolean t = f.get(); // 阻塞，等待返回结果
+                    if (t) {
+                        countYes.incrementAndGet();
+                    }
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                } catch (ExecutionException e) {
+                    e.printStackTrace();
+                } finally {
+                    latch.countDown();
+                }
+            });
+        }
+
+        try {
+            latch.await(5 * 1000, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        System.out.println("countYes=" + countYes.get());
+        if (countYes.get() > peerSet.getSet().size() / 2) {
+            // 认为复制成功
+            commitIndex = entry.getIndex();
+
+            // TODO: 2019/4/14  尝试提交到状态机
+            return ClientResp.yes("提交成功");
+        } else {
+            // 复制失败,同时删除 leader 下的此日志
+            logModule.removeFromIndex(entry.getIndex());
+
+
+            // 尝试根据 matchIndexMap 更新 commitIndex
+            List<Long> matchIndexes = new ArrayList<>(matchIndexMap.values());
+            Collections.sort(matchIndexes);
+            long mid = matchIndexes.get(matchIndexes.size() / 2);
+            if (mid > commitIndex) {
+                LogEntry e = logModule.read(mid);
+                if (e != null) {
+                    if (e.getTerm() == currentTerm) {
+                        commitIndex = mid;
+                    }
+                }
+            }
+
+            return ClientResp.no("提交失败");
+        }
     }
 
     public Response handleAppendEntry(AppendEntryParam param) {
-        return null;
+        lock.lock();
+        try {
+            if (param.getTerm() < currentTerm)
+                return AppendEntryResult.no(currentTerm);
+            System.out.println("-----------handleAppendEntry-----------");
+            System.out.println(param);
+
+            prevHeartBeatStamp = System.currentTimeMillis();
+            prevElectionStamp = System.currentTimeMillis();
+            peerSet.setLeader(new Peer(param.getLeaderId()));
+            if (status != NodeStatus.FOLLOWER) {
+                status = NodeStatus.FOLLOWER;
+            }
+            if (currentTerm != param.getTerm()) {
+                currentTerm = param.getTerm();
+            }
+
+            if (param.getPrevLogIndex() != -1 && logModule.getLastIndex() != -1) { // 说明当前节点有日志
+                LogEntry matchEntry = logModule.read(param.getPrevLogIndex());
+                if (matchEntry != null) {
+                    if (matchEntry.getTerm() != param.getPrevLogTerm()) {// prevLogIndex 处的任期号 != prevLogTerm
+                        return AppendEntryResult.no(currentTerm); // 返回 false, 让 leader 的 index-1
+                    }
+                } else {
+                    // 在当前找不到  prevLogIndex
+                    return AppendEntryResult.no(currentTerm);
+                }
+            }
+
+            int i = 0;
+
+            for (; i < param.getEntries().size(); i++) {
+                LogEntry add = param.getEntries().get(i);
+                LogEntry entry = logModule.read(add.getIndex());
+                if (entry != null) {
+                    if (entry.getTerm() != add.getTerm()) {
+                        // 要添加的日志项，和已经存在的日志冲突(index 相同但任期号不同)，删除已经存在的日志和后面的日志
+                        // 删除 existEntry 及之后的日志项
+                        logModule.removeFromIndex(add.getIndex());
+                        break; // 删除该位置及之后的日志，跳出循环，从 entry(i).getIndex() 处存储日志
+                    }
+                    // == ，不用添加，继续遍历比较下一个日志
+                } else { // entry == null , 说明从 entry(i).getIndex() 处开始全部添加到当前节点的日志中
+                    break;
+                }
+            }
+
+            for (; i < param.getEntries().size(); i++) {
+                logModule.write(param.getEntries().get(i));
+            }
+
+            // 更新 leaderCommit
+            if (param.getLeaderCommitIndex() > commitIndex) {
+                commitIndex = Math.min(param.getLeaderCommitIndex(), logModule.getLastIndex());
+//                lastApplied = commitIndex;
+            }
+            return AppendEntryResult.yes(currentTerm);
+
+        } finally {
+            lock.unlock();
+        }
+
+
     }
 
     public void destroy() {
         rpcServer.stop();
+    }
+
+    /**
+     * 周期性打印当前节点的 日志信息
+     */
+    class PrintTask implements Runnable {
+        @Override
+        public void run() {
+            logModule.printAll();
+        }
     }
 
 }

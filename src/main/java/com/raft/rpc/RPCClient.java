@@ -20,9 +20,10 @@ public class RPCClient {
     public Response send(Request request) {
         Response resp = null;
         try {
-            resp = (Response) client.invokeSync(request.getUrl(), request, 5 * 1000);
+            resp = (Response) client.invokeSync(request.getUrl(), request, 20 * 1000);
         } catch (RemotingException e) {
-            System.out.println(request.getDesc() + " 连接失败");
+            e.printStackTrace();
+            System.out.println(request.getUrl() + " 连接失败");
         } catch (InterruptedException e) {
             e.printStackTrace();
         }

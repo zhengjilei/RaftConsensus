@@ -9,11 +9,11 @@ import java.util.List;
 public class AppendEntryParam implements Serializable {
     private int term; // leader's term
     private String leaderId;
-    private int prevLogIndex;
-    private int prevLogTerm;
+    private long prevLogIndex = -1;
+    private int prevLogTerm = -1;
 
     private List<LogEntry> entries; // 发送的日志项
-    private int leaderCommitIndex;
+    private long leaderCommitIndex;
 
     public int getTerm() {
         return term;
@@ -31,11 +31,11 @@ public class AppendEntryParam implements Serializable {
         this.leaderId = leaderId;
     }
 
-    public int getPrevLogIndex() {
+    public long getPrevLogIndex() {
         return prevLogIndex;
     }
 
-    public void setPrevLogIndex(int prevLogIndex) {
+    public void setPrevLogIndex(long prevLogIndex) {
         this.prevLogIndex = prevLogIndex;
     }
 
@@ -55,11 +55,23 @@ public class AppendEntryParam implements Serializable {
         this.entries = entries;
     }
 
-    public int getLeaderCommitIndex() {
+    public long getLeaderCommitIndex() {
         return leaderCommitIndex;
     }
 
-    public void setLeaderCommitIndex(int leaderCommitIndex) {
+    public void setLeaderCommitIndex(long leaderCommitIndex) {
         this.leaderCommitIndex = leaderCommitIndex;
+    }
+
+    @Override
+    public String toString() {
+        return "AppendEntryParam{" +
+                "term=" + term +
+                ", leaderId='" + leaderId + '\'' +
+                ", prevLogIndex=" + prevLogIndex +
+                ", prevLogTerm=" + prevLogTerm +
+                ", entries=" + entries +
+                ", leaderCommitIndex=" + leaderCommitIndex +
+                '}';
     }
 }

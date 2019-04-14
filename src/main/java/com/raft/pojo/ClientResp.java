@@ -22,4 +22,11 @@ public class ClientResp extends Response {
     public Object getResult() {
         return result;
     }
+
+    @Override
+    public String toString() {
+        return "ClientResp{" +
+                "result=" + result +
+                '}';
+    }
 }

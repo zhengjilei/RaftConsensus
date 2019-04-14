@@ -30,6 +30,10 @@ public class RPCServer {
             return node.handleHeartbeat((AppendEntryParam) request.getReqObj());
         } else if (request.getType() == Request.RequestType.CLIENT) {
             return node.handleClientRequest(request);
+        } else if (request.getType() == Request.RequestType.APPEND_ENTRY) {
+            return node.handleAppendEntry((AppendEntryParam) request.getReqObj());
+        } else if (request.getType() == Request.RequestType.QUERY_ENTRY) {
+            return node.handleGetRequest(request);
         }
         return null;
     }
