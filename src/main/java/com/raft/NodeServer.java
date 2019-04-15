@@ -94,7 +94,6 @@ public class NodeServer {
         List<Peer> peers = new ArrayList<>();
         List<Peer> otherPeers = new ArrayList<>();
 
-
         for (String ipAddr : ipAddrs) {
             Peer p = new Peer(ipAddr);
             peers.add(p);
@@ -128,7 +127,7 @@ public class NodeServer {
         threadPool.scheduleAtFixedRate(new HeartbeatTask(), 30000, 1000, TimeUnit.MILLISECONDS); // 延迟 30s 执行，每隔 1s 检查是否需要发送心跳
 
         // 启动输出任务, 每隔 3s 打印当前节点存储的日志项
-        threadPool.scheduleAtFixedRate(new PrintTask(), 40000,10000, TimeUnit.MILLISECONDS);
+        threadPool.scheduleAtFixedRate(new PrintTask(), 40000, 10000, TimeUnit.MILLISECONDS);
 
         // 获取当前任期
         LogEntry entry = logModule.getLast();
@@ -268,7 +267,7 @@ public class NodeServer {
         long lastIndex = logModule.getLastIndex();
         for (Peer p : otherPeers) {
             nextIndexMap.put(p, lastIndex + 1);
-            matchIndexMap.put(p, 0L);
+            matchIndexMap.put(p, -1L);
         }
     }
 
@@ -301,7 +300,6 @@ public class NodeServer {
             lock.unlock();
         }
         return AppendEntryResult.yes(currentTerm);
-
     }
 
     class HeartbeatTask implements Runnable {
@@ -332,12 +330,12 @@ public class NodeServer {
                     request.setType(Request.RequestType.HEARTBEAT);
                     request.setUrl(peer.getAddr());
                     request.setDesc("request-id = 向" + request.getUrl() + "发送心跳, time=" + System.currentTimeMillis());
-
                     threadPool.execute(new Runnable() {
                         @Override
                         public void run() {
                             AppendEntryResult resp = (AppendEntryResult) rpcClient.send(request);
                             if (resp == null) {
+                                System.out.println(request.getDesc() + " =>心跳失败");
                                 return;
                             }
                             if (resp.getTerm() > currentTerm) {
@@ -395,7 +393,6 @@ public class NodeServer {
         // 首先存入 leader 本地
         logModule.write(entry);
 
-
         // 向其他节点发送 appendEntryRPC
         List<Peer> otherPeers = peerSet.getOtherPeers();
         List<Future<Boolean>> resultList = new ArrayList<>();
@@ -408,22 +405,26 @@ public class NodeServer {
                     while (end - begin < 20 * 1000L) {
                         AppendEntryParam param = new AppendEntryParam();
                         param.setTerm(currentTerm);
+                        param.setLeaderId(peerSet.getSelf().getAddr());
+                        param.setLeaderCommitIndex(commitIndex);
+
                         // 将[nextIndex, newEntryIndex] 日志全部发送出去
                         List<LogEntry> entryList = new ArrayList<>();
                         Long nextIndex = nextIndexMap.get(p);
-                        if (nextIndex != null) {
+                        if (entry.getIndex() >= nextIndex) {
                             for (long i = nextIndex; i <= entry.getIndex(); i++) {
                                 LogEntry e = logModule.read(i);
                                 if (e != null) {
                                     entryList.add(e);
                                 }
                             }
+                        } else {
+                            entryList.add(entry);
                         }
                         param.setEntries(entryList);
-                        param.setLeaderId(peerSet.getSelf().getAddr());
-                        param.setLeaderCommitIndex(commitIndex);
 
-                        LogEntry lastEntry = logModule.getLast();
+                        // 注意: prevLogIndex prevLogTerm 表示的是即将发送的所有日志项的 前一个日志
+                        LogEntry lastEntry = logModule.read(nextIndex - 1); // 因为当前日志中已经添加了 新的日志项
                         if (lastEntry != null) {
                             param.setPrevLogTerm(lastEntry.getTerm());
                             param.setPrevLogIndex(lastEntry.getIndex());
@@ -434,24 +435,31 @@ public class NodeServer {
                         req.setType(Request.RequestType.APPEND_ENTRY);
                         req.setDesc("向" + p.getAddr() + "发送" + entry);
                         AppendEntryResult tmpRes = (AppendEntryResult) rpcClient.send(req); // 阻塞式发送 appendEntryRPC
-                        if (tmpRes.isSuccess()) { // 对方复制成功
-                            nextIndexMap.put(p, entry.getIndex() + 1);
-                            matchIndexMap.put(p, entry.getIndex());
-                            System.out.println(p.getAddr() + " 复制成功");
-                            return true;
-                        } else { // 复制失败
-                            if (tmpRes.getTerm() > currentTerm) {   // 对方任期比自己大
-                                currentTerm = tmpRes.getTerm();
-                                status = NodeStatus.FOLLOWER;
-                                return false;
-                            } else {   // 对方任期不比自己大，但失败了, 说明日志不匹配
-                                logModule.removeFromIndex(nextIndex);
-                                nextIndexMap.put(p, nextIndex - 1);
-                                // 继续尝试
-                            }
+                        if (tmpRes != null) {
+                            if (tmpRes.isSuccess()) { // 对方复制成功
+                                nextIndexMap.put(p, entry.getIndex() + 1);
+                                matchIndexMap.put(p, entry.getIndex());
+                                System.out.println(p.getAddr() + " 复制成功");
+                                return true;
+                            } else { // 复制失败
+                                if (tmpRes.getTerm() > currentTerm) {   // 对方任期比自己大
+                                    currentTerm = tmpRes.getTerm();
+                                    status = NodeStatus.FOLLOWER;
+                                    return false;
+                                } else {   // 对方任期不比自己大，但失败了, 说明日志不匹配
+//                                System.out.println("removeFromIndex:" + nextIndex);
+                                    System.out.println("下一次发送给" + p.getAddr() + "的是:" + (nextIndex - 1) + "及之后的数据");
+//                                logModule.removeFromIndex(nextIndex);
+                                    nextIndexMap.put(p, nextIndex - 1);
+                                    // 继续尝试
+                                }
 
+                            }
+                            end = System.currentTimeMillis();
+                        } else {
+                            // tmpRes==null 说明对方宕机，连接失败, 不要进行不必要的尝试
+                            return false;
                         }
-                        end = System.currentTimeMillis();
                     }
                     System.out.println(p.getAddr() + " 复制失败");
                     return false;
@@ -466,10 +474,13 @@ public class NodeServer {
         for (Future<Boolean> f : resultList) {
             threadPool.execute(() -> {
                 try {
-                    Boolean t = f.get(); // 阻塞，等待返回结果
-                    if (t) {
-                        countYes.incrementAndGet();
+                    if (f != null) {  // 当某个节点宕机， f ==null
+                        Boolean t = f.get(); // 阻塞，等待返回结果
+                        if (t) {
+                            countYes.incrementAndGet();
+                        }
                     }
+
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 } catch (ExecutionException e) {
@@ -495,7 +506,6 @@ public class NodeServer {
         } else {
             // 复制失败,同时删除 leader 下的此日志
             logModule.removeFromIndex(entry.getIndex());
-
 
             // 尝试根据 matchIndexMap 更新 commitIndex
             List<Long> matchIndexes = new ArrayList<>(matchIndexMap.values());
@@ -531,19 +541,21 @@ public class NodeServer {
             if (currentTerm != param.getTerm()) {
                 currentTerm = param.getTerm();
             }
-
+//            System.out.println("1");
             if (param.getPrevLogIndex() != -1 && logModule.getLastIndex() != -1) { // 说明当前节点有日志
                 LogEntry matchEntry = logModule.read(param.getPrevLogIndex());
                 if (matchEntry != null) {
                     if (matchEntry.getTerm() != param.getPrevLogTerm()) {// prevLogIndex 处的任期号 != prevLogTerm
+//                        System.out.println("2");
                         return AppendEntryResult.no(currentTerm); // 返回 false, 让 leader 的 index-1
                     }
                 } else {
+//                    System.out.println("3");
                     // 在当前找不到  prevLogIndex
                     return AppendEntryResult.no(currentTerm);
                 }
             }
-
+            // 第一次添加日志 或者 prevLog 在当前节点中找到匹配的
             int i = 0;
 
             for (; i < param.getEntries().size(); i++) {
@@ -553,16 +565,19 @@ public class NodeServer {
                     if (entry.getTerm() != add.getTerm()) {
                         // 要添加的日志项，和已经存在的日志冲突(index 相同但任期号不同)，删除已经存在的日志和后面的日志
                         // 删除 existEntry 及之后的日志项
+                        System.out.println("removeIndex:" + add.getIndex());
                         logModule.removeFromIndex(add.getIndex());
                         break; // 删除该位置及之后的日志，跳出循环，从 entry(i).getIndex() 处存储日志
                     }
                     // == ，不用添加，继续遍历比较下一个日志
                 } else { // entry == null , 说明从 entry(i).getIndex() 处开始全部添加到当前节点的日志中
+                    System.out.println("entry==null");
                     break;
                 }
             }
 
             for (; i < param.getEntries().size(); i++) {
+//                System.out.println("for: " + param.getEntries().get(i));
                 logModule.write(param.getEntries().get(i));
             }
 
@@ -571,6 +586,9 @@ public class NodeServer {
                 commitIndex = Math.min(param.getLeaderCommitIndex(), logModule.getLastIndex());
 //                lastApplied = commitIndex;
             }
+
+//            System.out.println("4");
+
             return AppendEntryResult.yes(currentTerm);
 
         } finally {
